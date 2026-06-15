@@ -1,6 +1,6 @@
 # 🧭 Benefits Navigator for Families — NJ
 
-> **Databricks Apps & Agents for Good Hackathon** · solo project
+> **Databricks Apps & Agents for Good Hackathon**
 > A conversational tool that helps New Jersey families discover and act on public
 > benefit programs — fast, compassionately, and without bureaucratic jargon.
 
