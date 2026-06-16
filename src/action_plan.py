@@ -1,17 +1,34 @@
 from __future__ import annotations
 
+import re
+
 from .config import ANTHROPIC_API_KEY, CLAUDE_MODEL, CLAUDE_AVAILABLE
+from .bb_logging import log_action_plan_input
 
 _PLAN_SYSTEM = """\
-You are a health benefits navigator AI for families in India.
-Generate a concise, actionable benefit enrollment plan in plain English (max 400 words).
-Structure it as numbered steps the family can take TODAY.
-Refer to the Nearby Health Facilities section below instead of listing facility names.
-Use language simple enough for a community health worker to read aloud.
+You are a health benefits navigator AI for families in India, assisting a community health worker.
+Generate a concise, actionable support plan in plain English (max 300 words, 4-6 numbered steps).
 
-GROUNDING RULES — follow strictly:
+FAMILY INTRODUCTION:
+Begin with 1-2 sentences naming this family's specific situation (pregnancy status, child age,
+insurance/cost situation), noting that the guidance is based on trusted NFHS-5 district health data.
+Remind the reader this supplements but does not replace a qualified health worker or PHC.
+
+Then list EXACTLY 4-6 numbered action steps. Keep each step to one sentence.
+Use language simple enough for a community health worker to read aloud.
+Spell "Anganwadi" correctly (not "angawadi" or "Anganwadi worker").
+
+CRITICAL — DO NOT LIST FACILITIES:
+The application displays facility cards with full evidence below the plan — do NOT repeat them.
+You MUST NOT include any of the following in your response:
+  - A heading such as "Nearby Health Facilities", "Facilities", "Recommended Facilities", or similar
+  - Any numbered or bulleted list of facility names, addresses, or phone numbers
+  - Any table or formatted block of facility data
+For facility referral, write exactly one sentence such as:
+  "Review the facility cards below and call the first suitable option to confirm services."
+
+GROUNDING RULES - follow strictly:
 - Use ONLY the support pathways and facility information explicitly provided in this prompt.
-- Do NOT include a "Nearest Health Facilities" section or list facility names in the plan.
 - Do NOT name specific government schemes (Ayushman Bharat, ICDS, PM Matru Vandana Yojana,
   Janani Suraksha Yojana, PMMVY, or any other) unless the pathway text below explicitly names them.
 - Do NOT promise free food, free medicines, or free services unless the pathway text says so.
@@ -22,6 +39,52 @@ GROUNDING RULES — follow strictly:
 - Never assume the family has insurance unless the profile explicitly states uninsured=False.
 - When uncertain about a specific service say: "Ask your local health worker or facility."
 """
+
+# Compiled pattern to strip any facility-list section Claude may have included despite instructions.
+# Matches: a line containing "Facilit..." followed by pipe-delimited numbered items.
+_FACILITY_LIST_RE = re.compile(
+    r'\n[^\n]*Facilit(?:ies|y)[^\n]*\n(?:(?:[ \t]*\d+\.[^\n]*\|[^\n]*\n?))+',
+    re.IGNORECASE,
+)
+# Broader fallback: bold/heading "Facilities" line followed by any numbered items
+_FACILITY_HEADING_RE = re.compile(
+    r'\n(?:(?:\*{1,2})|(?:#{1,3}\s+))(?:Nearby\s+)?(?:Health\s+)?Facilit(?:ies|y)[^\n]*\n'
+    r'(?:(?:[ \t]*\d+\.[^\n]+\n?))+',
+    re.IGNORECASE,
+)
+
+
+def _strip_facility_section(text: str) -> str:
+    """Remove any standalone facility list that Claude included despite the prompt instruction."""
+    result = _FACILITY_LIST_RE.sub('\n', text)
+    result = _FACILITY_HEADING_RE.sub('\n', result)
+    return result.strip()
+
+_MAX_CLAUDE_FACILITIES = 5
+
+
+def _build_facility_lines(facilities: list[dict]) -> str:
+    """Return a compact facility summary string for the Claude prompt."""
+    if not facilities:
+        return "No facilities in local dataset\n"
+    lines = f"Top {len(facilities)} nearby facilities:\n"
+    for i, f in enumerate(facilities, 1):
+        name = f.get("name", "Unknown facility")
+        parts: list[str] = [name]
+        addr = ", ".join(x for x in [
+            f.get("address_line1", ""),
+            f.get("address_city", ""),
+            f.get("address_stateOrRegion", ""),
+            f.get("address_zipOrPostcode", ""),
+        ] if x)
+        if addr:
+            parts.append(addr)
+        phone = f.get("officialPhone", "")
+        if phone:
+            parts.append(f"Phone: {phone}")
+        lines += f"  {i}. {' | '.join(parts)}\n"
+    return lines
+
 
 _NFHS_DISPLAY_COLS = [
     ("institutional_birth_5y_pct", "Institutional births"),
@@ -83,10 +146,11 @@ def generate_action_plan(
     matched_pathways: list[dict],
     nfhs_rows: list[dict],
     facilities: list[dict],
+    followup_answers: dict | None = None,
 ) -> tuple[str, str]:
     """Return (plan_text, method), where method is 'claude' or 'deterministic'."""
     plan_text, method, _trace = generate_action_plan_with_trace(
-        profile, matched_pathways, nfhs_rows, facilities
+        profile, matched_pathways, nfhs_rows, facilities, followup_answers
     )
     return plan_text, method
 
@@ -96,8 +160,12 @@ def generate_action_plan_with_trace(
     matched_pathways: list[dict],
     nfhs_rows: list[dict],
     facilities: list[dict],
+    followup_answers: dict | None = None,
 ) -> tuple[str, str, dict]:
     """Return (plan_text, method, trace)."""
+    # Cap facilities before logging and before sending to Claude
+    top_facilities = facilities[:_MAX_CLAUDE_FACILITIES]
+    log_action_plan_input(profile, matched_pathways, nfhs_rows, top_facilities, followup_answers)
     trace = {
         "provider": "deterministic",
         "model": None,
@@ -129,11 +197,13 @@ def generate_action_plan_with_trace(
                     if v and v not in ("NA", "*", "nan", ""):
                         nfhs_lines += f"  {label}: {v}%\n"
 
-            fac_lines = (
-                f"{min(len(facilities), 5)} nearby facilities are listed separately below.\n"
-                if facilities
-                else "No facilities in local dataset\n"
-            )
+            fac_lines = _build_facility_lines(top_facilities)
+
+            followup_lines = ""
+            if followup_answers:
+                followup_lines = "Family follow-up answers:\n" + "".join(
+                    f"  {k}: {v}\n" for k, v in followup_answers.items() if v
+                )
 
             user_msg = (
                 f"Family location: {location}\n"
@@ -144,15 +214,15 @@ def generate_action_plan_with_trace(
                 f"uninsured={profile.get('uninsured')}\n\n"
                 f"Matched support pathways:\n{pathway_lines}\n"
                 f"District health context (NFHS-5):\n{nfhs_lines or 'No data available'}\n"
-                f"Nearby facility section:\n{fac_lines}\n"
+                f"Nearby facilities:\n{fac_lines}\n"
+                f"{followup_lines}"
                 "Generate a numbered action plan for this family."
             )
 
             client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
             response = client.messages.create(
                 model=CLAUDE_MODEL,
-                max_tokens=900,
-                thinking={"type": "adaptive"},
+                max_tokens=700,
                 system=_PLAN_SYSTEM,
                 messages=[{"role": "user", "content": user_msg}],
             )
@@ -161,6 +231,8 @@ def generate_action_plan_with_trace(
             for block in response.content:
                 if block.type == "text":
                     plan_text += block.text
+
+            plan_text = _strip_facility_section(plan_text)
 
             if plan_text.strip():
                 trace.update({

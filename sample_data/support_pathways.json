@@ -12,7 +12,7 @@
     "pathway_id": "child_nutrition",
     "pathway_name": "Child Nutrition Support",
     "category": "child_health",
-    "trigger_condition": "nutrition_need=true",
+    "trigger_condition": "child_under_5=true OR nutrition_need=true",
     "recommended_action": "Review district stunting, wasting, underweight, diarrhea, and anemia indicators. Recommend nearby child-health or nutrition-related facilities.",
     "data_sources": "facilities,nfhs_5_district_health_indicators,pincode_district_lookup",
     "active_flag": "true"

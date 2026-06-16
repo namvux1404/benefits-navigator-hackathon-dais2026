@@ -106,7 +106,12 @@ _URGENT_SIGNALS = (
 # ── Question generation ───────────────────────────────────────────────────────
 
 def _deterministic_questions(profile: dict, raw_text: str = "") -> list[dict]:
-    """Return 2-3 deterministic text-input follow-up questions based on scenario signals."""
+    """Return 2-3 deterministic text-input follow-up questions based on scenario signals.
+
+    Broad scenarios (2+ distinct clinical needs, or 1 need + affordability) always ask
+    cost/travel/urgency regardless of whether vaccination is mentioned.  Focused
+    scenarios (single need, no affordability) use need-specific questions.
+    """
     questions: list[dict] = []
     raw_lower = (raw_text or "").lower()
 
@@ -123,67 +128,97 @@ def _deterministic_questions(profile: dict, raw_text: str = "") -> list[dict]:
             "placeholder": placeholder,
         })
 
+    # Pincode always takes slot 1 when missing
     if not profile.get("pincode"):
         add("pincode", "What is your PIN code or district?", "E.g. 560001 or Bangalore area")
 
-    if profile.get("immunization_need"):
-        add(
-            "immunization_timing",
-            "Is this a routine vaccination visit, or do you think a vaccine dose was missed or delayed?",
-            "Routine visit, or one dose may be delayed.",
-        )
-        add(
-            "vaccination_record",
-            "Do you have the child's vaccination card or previous vaccine record?",
-            "Yes, I have the card, or no, I do not have it.",
-        )
-
-    if profile.get("pregnant"):
-        add(
-            "urgency",
-            "Is this urgent today, or are you planning ahead?",
-            "It is urgent today, or I am planning ahead.",
-        )
-        add(
-            "travel_distance",
-            "How far can you travel for a pregnancy or maternal health facility?",
-            "Up to 5 km.",
-        )
-
+    # Count distinct clinical signals (child_under_5 alone is demographic, not a clinical need)
     affordability_mentioned = any(kw in raw_lower for kw in _AFFORDABILITY_SIGNALS)
-    if affordability_mentioned:
+    _clinical_count = sum([
+        bool(profile.get("pregnant") or profile.get("recently_delivered")),
+        bool(profile.get("nutrition_need")),
+        bool(profile.get("immunization_need")),
+    ])
+    # Broad: 2+ clinical needs, OR 1 clinical need + affordability signal
+    is_broad = _clinical_count >= 2 or (_clinical_count >= 1 and affordability_mentioned)
+
+    if is_broad:
+        # Broad family scenario: always ask cost situation, travel, and urgency
         add(
             "insurance",
             "Tell us about your current health insurance or cost situation.",
             "I do not have insurance and need low-cost care.",
         )
-
-    if profile.get("facility_search"):
         add(
             "travel_distance",
-            "How far can you travel for a health facility?",
+            "How far can you travel to reach a health facility?",
             "Up to 5 km.",
         )
-
-    if profile.get("nutrition_need"):
-        add(
-            "nutrition_support_type",
-            "Is this for growth monitoring, feeding support, or general nutrition advice?",
-            "Growth monitoring and feeding support.",
-        )
-
-    if len(questions) < 2:
         add(
             "urgency",
             "Is this urgent today, or are you planning ahead?",
             "It is urgent today, but not an emergency.",
         )
-    if len(questions) < 2 and profile.get("pincode"):
-        add(
-            "travel_distance",
-            "How far can you travel for a health facility?",
-            "Up to 5 km.",
-        )
+    else:
+        # Focused scenario: use signal-specific questions
+        if profile.get("immunization_need"):
+            add(
+                "immunization_timing",
+                "Is this a routine vaccination visit, or do you think a vaccine dose was missed or delayed?",
+                "Routine visit, or one dose may be delayed.",
+            )
+            add(
+                "vaccination_record",
+                "Do you have the child's vaccination card or previous vaccine record?",
+                "Yes, I have the card, or no, I do not have it.",
+            )
+
+        if profile.get("pregnant"):
+            add(
+                "urgency",
+                "Is this urgent today, or are you planning ahead?",
+                "It is urgent today, or I am planning ahead.",
+            )
+            add(
+                "travel_distance",
+                "How far can you travel for a pregnancy or maternal health facility?",
+                "Up to 5 km.",
+            )
+
+        if affordability_mentioned:
+            add(
+                "insurance",
+                "Tell us about your current health insurance or cost situation.",
+                "I do not have insurance and need low-cost care.",
+            )
+
+        if profile.get("facility_search"):
+            add(
+                "travel_distance",
+                "How far can you travel for a health facility?",
+                "Up to 5 km.",
+            )
+
+        if profile.get("nutrition_need"):
+            add(
+                "nutrition_support_type",
+                "Is this for growth monitoring, feeding support, or general nutrition advice?",
+                "Growth monitoring and feeding support.",
+            )
+
+        # Ensure minimum 2 questions
+        if len(questions) < 2:
+            add(
+                "urgency",
+                "Is this urgent today, or are you planning ahead?",
+                "It is urgent today, but not an emergency.",
+            )
+        if len(questions) < 2 and profile.get("pincode"):
+            add(
+                "travel_distance",
+                "How far can you travel for a health facility?",
+                "Up to 5 km.",
+            )
 
     return questions[:3]
 
@@ -302,18 +337,17 @@ def parse_followup_answers(
     if any(kw in all_text for kw in _AFFORDABILITY_SIGNALS):
         updates["low_cost_need"] = True
 
-    # Travel distance — word-number forms first, then digit forms
+    # Travel distance — digit forms first (catches "up to 5 km", "within 10 km", etc.)
     km_found: int | None = None
-    if re.search(r"\btwenty.?five\s*km\b", all_text):
-        km_found = 25
-    elif re.search(r"\bten\s*km\b", all_text):
-        km_found = 10
-    elif re.search(r"\bfive\s*km\b", all_text):
-        km_found = 5
-    if km_found is None:
-        for km_str in ("25", "10", "5"):
-            if re.search(rf"\b{km_str}\s*km\b", all_text):
-                km_found = int(km_str)
+    m_km = re.search(r"\b(\d+)\s*(?:km|kilometer|kilometre)s?\b", all_text)
+    if m_km:
+        km_found = int(m_km.group(1))
+    else:
+        # Word-number forms as fallback
+        _word_map = {r"twenty.?five": 25, r"\bten\b": 10, r"\bfive\b": 5}
+        for pattern, val in _word_map.items():
+            if re.search(pattern, all_text) and "km" in all_text:
+                km_found = val
                 break
     if km_found is not None:
         updates["travel_km"] = km_found

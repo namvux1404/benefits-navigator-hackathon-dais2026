@@ -26,6 +26,15 @@ CREATE TABLE IF NOT EXISTS feedback (
     rating        TEXT NOT NULL,
     comment       TEXT
 );
+
+CREATE TABLE IF NOT EXISTS facility_shortlists (
+    id            TEXT PRIMARY KEY,
+    session_id    TEXT,
+    created_at    TEXT NOT NULL,
+    facility_name TEXT NOT NULL,
+    facility_data TEXT,
+    user_note     TEXT
+);
 """
 
 
@@ -108,6 +117,44 @@ class StateStore:
                 (feedback_id, session_id, now, rating, comment),
             )
         return feedback_id
+
+    def save_shortlist_item(
+        self,
+        session_id: str | None,
+        facility_name: str,
+        facility_data: dict | None = None,
+        user_note: str = "",
+    ) -> str:
+        item_id = str(uuid.uuid4())
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO facility_shortlists "
+                "(id, session_id, created_at, facility_name, facility_data, user_note) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    item_id,
+                    session_id,
+                    now,
+                    facility_name,
+                    json.dumps(facility_data, default=str) if facility_data else None,
+                    user_note,
+                ),
+            )
+        return item_id
+
+    def get_shortlist(self, session_id: str | None = None) -> list[dict]:
+        with self._connect() as conn:
+            if session_id:
+                rows = conn.execute(
+                    "SELECT * FROM facility_shortlists WHERE session_id = ? ORDER BY created_at DESC",
+                    (session_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM facility_shortlists ORDER BY created_at DESC LIMIT 20"
+                ).fetchall()
+        return [dict(r) for r in rows]
 
     def get_recent_feedback(self, limit: int = 20) -> list[dict]:
         with self._connect() as conn:

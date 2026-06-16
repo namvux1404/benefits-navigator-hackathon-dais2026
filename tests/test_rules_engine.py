@@ -73,7 +73,7 @@ def test_between_as_full_condition():
 # --- pathway matching ---
 
 def test_demo_scenario_matched_pathways():
-    """PIN 560001: pregnant mother + 3-year-old → maternal_care + child_nutrition + women_preventive_screening."""
+    """PIN 560001: pregnant mother + 3-year-old -> maternal_care + child_nutrition + women_preventive_screening."""
     profile = {
         "pregnant": True,
         "recently_delivered": False,
@@ -91,7 +91,7 @@ def test_demo_scenario_matched_pathways():
     matched_ids = {pw["pathway_id"] for pw in matched}
     assert "maternal_care" in matched_ids
     assert "child_nutrition" in matched_ids
-    # 3-year-old is 36 months — outside the 0–35 immunization window
+    # 3-year-old is 36 months - outside the 0-35 immunization window
     assert "immunization" not in matched_ids
     assert "health_insurance_awareness" not in matched_ids
 
@@ -137,3 +137,32 @@ def test_active_flag_false_skips_pathway():
 def test_empty_profile_no_match():
     matched = match_pathways({}, load_pathways())
     assert matched == []
+
+
+# --- child_nutrition UC sync ---
+
+UC_EXPECTED_CHILD_NUTRITION_TRIGGER = "child_under_5=true OR nutrition_need=true"
+
+
+def test_child_nutrition_trigger_matches_uc_value():
+    """Local JSON child_nutrition trigger must exactly match the Unity Catalog value."""
+    pathways = load_pathways()
+    cn = next((pw for pw in pathways if pw["pathway_id"] == "child_nutrition"), None)
+    assert cn is not None, "child_nutrition pathway not found"
+    assert cn["trigger_condition"].strip() == UC_EXPECTED_CHILD_NUTRITION_TRIGGER
+
+
+def test_child_under_5_alone_matches_child_nutrition():
+    """child_under_5=true alone (without nutrition_need) should match Child Nutrition Support."""
+    profile = {"child_under_5": True, "nutrition_need": False}
+    matched = match_pathways(profile, load_pathways())
+    ids = {pw["pathway_id"] for pw in matched}
+    assert "child_nutrition" in ids
+
+
+def test_nutrition_need_alone_matches_child_nutrition():
+    """nutrition_need=true alone (without child_under_5) should still match."""
+    profile = {"child_under_5": False, "nutrition_need": True}
+    matched = match_pathways(profile, load_pathways())
+    ids = {pw["pathway_id"] for pw in matched}
+    assert "child_nutrition" in ids

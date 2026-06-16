@@ -12,7 +12,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SAMPLE_DATA_DIR = PROJECT_ROOT / "sample_data"
 LOCAL_STATE_DIR = PROJECT_ROOT / ".local_state"
 LOCAL_STATE_DIR.mkdir(exist_ok=True)
-SQLITE_PATH = LOCAL_STATE_DIR / "benefitbridge_local.db"
+LOCAL_SQLITE_PATH = os.environ.get(
+    "LOCAL_SQLITE_PATH",
+    str(LOCAL_STATE_DIR / "benefitbridge_local.db"),
+).strip()
+SQLITE_PATH = Path(LOCAL_SQLITE_PATH)
+SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-5-20250929"
@@ -31,6 +36,12 @@ DATA_MODE: str = (
     or os.environ.get("BENEFITS_DATA_MODE")
     or "json_only"
 ).lower().strip()
+
+DATABRICKS_SERVER_HOSTNAME = os.environ.get("DATABRICKS_SERVER_HOSTNAME", "").strip()
+DATABRICKS_HTTP_PATH = os.environ.get("DATABRICKS_HTTP_PATH", "").strip()
+DATABRICKS_TOKEN = os.environ.get("DATABRICKS_TOKEN", "").strip()
+UC_CATALOG = os.environ.get("UC_CATALOG", "benefits_navigator").strip() or "benefits_navigator"
+UC_SCHEMA = os.environ.get("UC_SCHEMA", "trusted").strip() or "trusted"
 
 # State store mode — 'sqlite' (Gate A/B) or 'lakebase' (Gate C)
 STATE_STORE_MODE: str = os.environ.get("STATE_STORE_MODE", "sqlite").lower().strip()

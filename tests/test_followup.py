@@ -20,10 +20,10 @@ DEMO_PROFILE = {
 }
 
 
-# ── _deterministic_questions — structure ────────────────────────────────────
+# -- _deterministic_questions - structure ------------------------------------
 
 def test_all_questions_are_text_type():
-    """All questions must use type='text' — no radio buttons."""
+    """All questions must use type='text' - no radio buttons."""
     from src.followup import _deterministic_questions
     for q in _deterministic_questions(DEMO_PROFILE, DEMO_TEXT):
         assert q["type"] == "text", f"Expected type='text' for question '{q['id']}', got '{q['type']}'"
@@ -47,7 +47,7 @@ def test_all_questions_have_required_fields():
 
 
 def test_demo_profile_includes_insurance_question():
-    """Demo profile (no insurance keyword in raw text) → asks about insurance/cost."""
+    """Demo profile (no insurance keyword in raw text) -> asks about insurance/cost."""
     from src.followup import _deterministic_questions
     questions = _deterministic_questions(DEMO_PROFILE, DEMO_TEXT)
     ids = [q["id"] for q in questions]
@@ -69,7 +69,7 @@ def test_demo_profile_returns_exactly_3():
 
 
 def test_no_pincode_first_question_is_pincode():
-    """No pincode in profile → first question asks for it with text input."""
+    """No pincode in profile -> first question asks for it with text input."""
     from src.followup import _deterministic_questions
     questions = _deterministic_questions({"pregnant": True}, "I am pregnant.")
     assert questions[0]["id"] == "pincode"
@@ -83,7 +83,7 @@ def test_max_3_questions():
 
 
 def test_insurance_in_raw_text_skips_insurance_question():
-    """Explicit 'uninsured' in description → skip the insurance question."""
+    """Explicit 'uninsured' in description -> skip the insurance question."""
     from src.followup import _deterministic_questions
     profile = {"pincode": "560001"}
     raw = "I am uninsured and need help with maternal care."
@@ -131,7 +131,7 @@ def test_vaccination_followup_does_not_ask_insurance_without_cost_signal():
     assert "insurance" not in [q["id"] for q in questions]
 
 
-# ── generate_followup_questions (no API) ────────────────────────────────────
+# -- generate_followup_questions (no API) ------------------------------------
 
 def test_generate_followup_no_api_falls_back_to_deterministic():
     import src.followup as fmod
@@ -157,14 +157,14 @@ def test_generate_followup_result_has_placeholder():
         fmod.CLAUDE_AVAILABLE = original
 
 
-# ── apply_followup_answers — free-text holistic parsing ─────────────────────
+# -- apply_followup_answers - free-text holistic parsing ---------------------
 
 def _make_q(qid: str) -> dict:
     return {"id": qid, "type": "text", "options": [], "question": "?", "placeholder": ""}
 
 
 def test_free_text_no_insurance_sets_uninsured_true():
-    """'I do not have insurance and need low-cost care.' → uninsured=True."""
+    """'I do not have insurance and need low-cost care.' -> uninsured=True."""
     from src.followup import apply_followup_answers
     questions = [_make_q("insurance")]
     answers = {"insurance": "I do not have insurance and need low-cost care."}
@@ -173,7 +173,7 @@ def test_free_text_no_insurance_sets_uninsured_true():
 
 
 def test_free_text_no_insurance_also_sets_low_income():
-    """'need low-cost care' in the same answer → low_income=True."""
+    """'need low-cost care' in the same answer -> low_income=True."""
     from src.followup import apply_followup_answers
     questions = [_make_q("insurance")]
     answers = {"insurance": "I do not have insurance and need low-cost care."}
@@ -190,7 +190,7 @@ def test_free_text_have_insurance_sets_uninsured_false():
 
 
 def test_free_text_travel_5km():
-    """'Up to 5 km.' → travel_km=5."""
+    """'Up to 5 km.' -> travel_km=5."""
     from src.followup import apply_followup_answers
     questions = [_make_q("travel_distance")]
     updated = apply_followup_answers({}, questions, {"travel_distance": "Up to 5 km."})
@@ -220,7 +220,7 @@ def test_free_text_travel_25_not_confused_with_5():
 
 
 def test_free_text_urgent_today():
-    """'It is urgent today, but not an emergency.' → urgency='urgent'."""
+    """'It is urgent today, but not an emergency.' -> urgency='urgent'."""
     from src.followup import apply_followup_answers
     questions = [_make_q("urgency")]
     updated = apply_followup_answers({}, questions, {"urgency": "It is urgent today, but not an emergency."})
@@ -228,7 +228,7 @@ def test_free_text_urgent_today():
 
 
 def test_free_text_routine_planning():
-    """'I am planning ahead for routine support.' → urgency='routine'."""
+    """'I am planning ahead for routine support.' -> urgency='routine'."""
     from src.followup import apply_followup_answers
     questions = [_make_q("urgency")]
     updated = apply_followup_answers({}, questions, {"urgency": "I am planning ahead for routine support."})
@@ -243,7 +243,7 @@ def test_free_text_not_urgent_sets_routine():
 
 
 def test_affordability_keyword_alone_sets_low_income():
-    """'I need affordable care.' alone → low_income=True."""
+    """'I need affordable care.' alone -> low_income=True."""
     from src.followup import apply_followup_answers
     questions = [_make_q("insurance")]
     updated = apply_followup_answers({}, questions, {"insurance": "I need affordable care."})
@@ -251,7 +251,7 @@ def test_affordability_keyword_alone_sets_low_income():
 
 
 def test_not_sure_leaves_insurance_unchanged():
-    """A vague answer with no insurance keywords → profile unchanged."""
+    """A vague answer with no insurance keywords -> profile unchanged."""
     from src.followup import apply_followup_answers
     questions = [_make_q("insurance")]
     original_val = False
@@ -276,7 +276,7 @@ def test_empty_answers_leaves_profile_unchanged():
 
 
 def test_complete_demo_followup_enriches_profile():
-    """All three demo question answers → profile enriched with all expected fields."""
+    """All three demo question answers -> profile enriched with all expected fields."""
     from src.followup import apply_followup_answers
     questions = [_make_q("insurance"), _make_q("travel_distance"), _make_q("urgency")]
     answers = {
@@ -301,7 +301,7 @@ def test_profile_review_fields_populated_after_answers():
     answers = {
         "insurance": "I do not have insurance and need low-cost care.",
         "travel_distance": "Up to 5 km.",
-        "urgency": "Routine — planning ahead.",
+        "urgency": "Routine - planning ahead.",
     }
     updated = apply_followup_answers(DEMO_PROFILE.copy(), questions, answers)
     # All fields needed for the review card to render completely
@@ -313,7 +313,7 @@ def test_profile_review_fields_populated_after_answers():
     assert "urgency" in updated
 
 
-# ── parse_followup_answers — direct unit tests ──────────────────────────────
+# -- parse_followup_answers - direct unit tests ------------------------------
 
 def test_parse_returns_dict():
     from src.followup import parse_followup_answers
@@ -432,7 +432,7 @@ def test_parse_does_not_include_low_cost_need_when_absent():
     assert "low_cost_need" not in result
 
 
-# ── merge_profile — direct unit tests ───────────────────────────────────────
+# -- merge_profile - direct unit tests ---------------------------------------
 
 def test_merge_copies_base_profile():
     from src.followup import merge_profile
@@ -487,10 +487,10 @@ def test_merge_empty_updates_returns_copy():
     assert final is not base  # it's a copy, not the same object
 
 
-# ── Full demo lineage test ───────────────────────────────────────────────────
+# -- Full demo lineage test ---------------------------------------------------
 
 def test_full_demo_lineage():
-    """Gate A demo scenario: base_profile → follow-up answers → final_profile has all expected fields."""
+    """Gate A demo scenario: base_profile -> follow-up answers -> final_profile has all expected fields."""
     from src.followup import merge_profile, parse_followup_answers
 
     base_profile = {
@@ -535,3 +535,49 @@ def test_full_demo_lineage():
 
     # base_profile not mutated
     assert base_profile["uninsured"] is None
+
+
+# -- New: broad-scenario and urgency tests ------------------------------------
+
+def test_broad_scenario_with_immunization_asks_cost_travel_urgency():
+    """Broad scenario (pregnant + nutrition + vaccination) must ask cost/travel/urgency."""
+    from src.followup import _deterministic_questions
+    profile = {
+        "pincode": "560001",
+        "pregnant": True,
+        "child_under_5": True,
+        "nutrition_need": True,
+        "immunization_need": True,   # vaccination mentioned but scenario is broad
+        "facility_search": True,
+    }
+    raw = (
+        "I am pregnant and have a 3-year-old child. I do not know where to go for "
+        "affordable health services. I need help with nutrition, vaccination, and "
+        "finding a nearby facility."
+    )
+    questions = _deterministic_questions(profile, raw)
+    ids = [q["id"] for q in questions]
+    assert "insurance" in ids, f"Broad scenario should ask insurance/cost, got: {ids}"
+    assert "travel_distance" in ids, f"Broad scenario should ask travel, got: {ids}"
+    assert "urgency" in ids, f"Broad scenario should ask urgency, got: {ids}"
+    assert "immunization_timing" not in ids, (
+        f"Vaccination-specific question should not dominate broad scenario, got: {ids}"
+    )
+
+
+def test_urgent_today_not_emergency_is_urgent():
+    """'urgent today but not an emergency' should parse as urgency=urgent, not routine."""
+    from src.followup import parse_followup_answers
+    q = [{"id": "urgency", "type": "text", "options": [], "question": "?", "placeholder": ""}]
+    result = parse_followup_answers(q, {"urgency": "urgent today but not an emergency"})
+    assert result.get("urgency") == "urgent"
+    assert result.get("urgency") != "routine"
+
+
+def test_up_to_km_parses_travel_range():
+    """'Up to 7 km' and 'within 3 km' should parse any numeric km distance."""
+    from src.followup import parse_followup_answers
+    q = [{"id": "travel_distance", "type": "text", "options": [], "question": "?", "placeholder": ""}]
+    assert parse_followup_answers(q, {"travel_distance": "Up to 7 km"}).get("travel_km") == 7
+    assert parse_followup_answers(q, {"travel_distance": "within 3 km"}).get("travel_km") == 3
+    assert parse_followup_answers(q, {"travel_distance": "15 kilometers"}).get("travel_km") == 15
