@@ -43,6 +43,39 @@ def plan_method_label(plan_method: str) -> str:
     return "Deterministic fallback"
 
 
+def normalize_trust_score(raw: float | None) -> float | None:
+    """Normalize a 0–1, 0–10, or 0–100 score to the 0–10 range. Returns None if unresolvable."""
+    if raw is None:
+        return None
+    if 0.0 <= raw <= 1.0:
+        return round(raw * 10, 1)
+    if 1.0 < raw <= 10.0:
+        return round(raw, 1)
+    if 10.0 < raw <= 100.0:
+        return round(raw / 10, 1)
+    return None
+
+
+def trust_signal_from_score(score: float | None) -> str:
+    """Map a normalized 0–10 score to a trust signal label."""
+    if score is None:
+        return "Unknown"
+    if score >= 8.0:
+        return "High"
+    if score >= 5.0:
+        return "Medium"
+    if score > 0:
+        return "Limited"
+    return "Unknown"
+
+
+def score_from_signal(signal: str) -> float | None:
+    """Return a representative numeric score for a named trust signal."""
+    return {"high": 8.5, "medium": 6.5, "limited": 4.0, "low": 2.5}.get(
+        (signal or "").lower()
+    )
+
+
 def safe_float(v: Any) -> float | None:
     if v is None:
         return None
@@ -80,7 +113,7 @@ def format_facility(f: dict) -> dict:
             ] if x
         ),
         "phone": phone,
-        "email": f.get("email", ""),
+        "email": _clean_email(f.get("email", "")),
         "specialties": f.get("specialties", ""),
         "service_tags": service_tags_for_facility(f),
         "lat": safe_float(f.get("latitude")),
@@ -200,6 +233,29 @@ def pathway_reason(profile: dict, pathway: dict) -> str:
     return pathway.get("trigger_condition", "")
 
 
+def facility_why_shown(
+    facility: dict,
+    search_pincode: str = "",
+    search_state: str = "",
+    trust_signal: str = "",
+) -> str:
+    """Return a short 'why shown' description for a facility card."""
+    parts: list[str] = []
+    fac_pin = str(facility.get("address_zipOrPostcode") or "").strip()
+    fac_state = str(facility.get("address_stateOrRegion") or "").upper().strip()
+    if search_pincode and fac_pin == str(search_pincode).strip():
+        parts.append("PIN code match")
+    elif search_state and fac_state == search_state.upper():
+        parts.append("State location match")
+    else:
+        parts.append("Location data available")
+    if trust_signal in ("High", "Medium"):
+        parts.append("stronger available evidence")
+    else:
+        parts.append("evidence available")
+    return " · ".join(parts)
+
+
 def next_steps_for_profile(profile: dict) -> list[str]:
     if profile.get("immunization_need"):
         return [
@@ -225,7 +281,6 @@ def results_section_order() -> list[str]:
         "header",
         "matched_pathways",
         "action_plan",
-        "next_steps",
         "facilities",
         "district_indicators",
         "feedback",
@@ -314,6 +369,243 @@ def badge_ai_label(claude_available: bool, claude_model: str) -> str:
     if not claude_available:
         return "AI: Deterministic"
     return "AI: Claude Sonnet"
+
+
+_SOURCE_LABEL_MAP: dict[str, str] = {
+    "kie": "Provided facility record",
+    "overture": "Provided facility record",
+    "dynamic": "Provided facility record",
+    "constant": "Provided facility record",
+}
+
+_EMAIL_VALID_RE = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
+_EMAIL_BAD_RE = re.compile(r'[\xc2\xa0\x00-\x1f]|protected', re.IGNORECASE)
+
+
+def _clean_data_source(raw_source: str | None) -> str:
+    """Map raw source field value to a human-readable label."""
+    if not raw_source:
+        return ""
+    s = str(raw_source).strip().lower()
+    if s in ("", "na", "null", "none"):
+        return ""
+    return _SOURCE_LABEL_MAP.get(s, "Provided facility record")
+
+
+def _clean_email(raw_email: str | None) -> str:
+    """Return email if it looks valid, otherwise empty string."""
+    if not raw_email:
+        return ""
+    e = str(raw_email).strip()
+    if not e or len(e) > 120:
+        return ""
+    if _EMAIL_BAD_RE.search(e):
+        return ""
+    if not _EMAIL_VALID_RE.match(e):
+        return ""
+    return e
+
+
+def compute_proxy_trust_signal(facility: dict) -> dict:
+    """Derive a trust signal from available facility record fields (score out of 10).
+
+    Returns {"signal": "High|Medium|Limited|Unknown", "score": int, "max_score": int,
+             "score_display": "8/10", "evidence": [str], "why": str}.
+    Does NOT overclaim — signal reflects data completeness, not care quality.
+
+    Thresholds (per spec): >= 8 High, >= 5 Medium, > 0 Limited, 0 Unknown.
+    """
+    score = 0
+    evidence: list[str] = []
+    max_score = 10
+
+    if facility.get("officialPhone"):
+        score += 1
+        evidence.append("Contact phone on record")
+    if _clean_email(facility.get("email")):
+        score += 1
+        evidence.append("Email contact on record")
+
+    addr_parts = [
+        facility.get("address_line1"),
+        facility.get("address_city"),
+        facility.get("address_stateOrRegion"),
+        facility.get("address_zipOrPostcode"),
+    ]
+    filled_addr = sum(1 for p in addr_parts if p and str(p).strip() not in ("", "NA"))
+    if filled_addr >= 3:
+        score += 2
+        evidence.append("Full address recorded")
+    elif filled_addr >= 2:
+        score += 1
+        evidence.append("Partial address recorded")
+
+    specs = facility.get("specialties") or ""
+    if str(specs).strip() not in ("", "NA", "[]", "null"):
+        score += 1
+        evidence.append("Specialties recorded")
+
+    cap_type = facility.get("capability") or facility.get("organization_type") or ""
+    if str(cap_type).strip() not in ("", "NA", "null", "None"):
+        score += 1
+        evidence.append("Service capability recorded")
+
+    if str(facility.get("affiliated_staff_presence", "")).lower() == "true":
+        score += 1
+        evidence.append("Staff affiliation confirmed")
+
+    desc = facility.get("description") or ""
+    if desc and str(desc).strip() not in ("", "NA", "null"):
+        score += 1
+        evidence.append("Facility description available")
+
+    if facility.get("source"):
+        score += 1
+        evidence.append(f"Source: {_clean_data_source(facility['source']) or facility['source']}")
+
+    _lat = safe_float(facility.get("latitude"))
+    _lon = safe_float(facility.get("longitude"))
+    if _lat is not None and _lon is not None:
+        score += 1
+        evidence.append("Coordinates recorded")
+
+    score = min(score, max_score)
+    signal = trust_signal_from_score(score if score > 0 else None)
+
+    return {
+        "signal": signal,
+        "score": score,
+        "max_score": max_score,
+        "score_display": f"{score}/{max_score}",
+        "evidence": evidence,
+        "why": "; ".join(evidence) if evidence else "No facility record data available",
+    }
+
+
+def facility_evidence_summary(facility: dict, trust_score_row: dict | None = None) -> dict:
+    """Return structured evidence block data for a facility card.
+
+    Used to cite the underlying facility record for every recommendation.
+    """
+    fd = format_facility(facility)
+    evidence_items: list[tuple[str, str]] = []
+
+    # Location
+    loc_parts = [
+        facility.get("address_city"),
+        facility.get("address_stateOrRegion"),
+        facility.get("address_zipOrPostcode"),
+    ]
+    loc_str = ", ".join(str(p) for p in loc_parts if p and str(p) not in ("", "NA"))
+    if loc_str:
+        evidence_items.append(("Location", loc_str))
+
+    # Facility type
+    ftype = facility.get("facilityTypeId") or facility.get("organization_type") or ""
+    otype = facility.get("operatorTypeId") or ""
+    type_str = ftype.capitalize() if ftype else ""
+    if otype and otype.lower() not in ("null", ""):
+        type_str += f" ({otype})"
+    if type_str:
+        evidence_items.append(("Facility type", type_str))
+
+    # Services / specialties
+    if fd["service_tags"]:
+        evidence_items.append(("Services / specialties", ", ".join(fd["service_tags"])))
+    elif str(facility.get("specialties", "")).strip() not in ("", "NA", "[]", "null"):
+        evidence_items.append(("Specialties (raw)", str(facility["specialties"])[:120]))
+
+    # Capacity and year
+    cap = facility.get("capacity") or ""
+    if cap and str(cap).strip() not in ("", "NA", "null"):
+        evidence_items.append(("Bed capacity", str(cap)))
+    year = facility.get("yearEstablished") or ""
+    if year and str(year).strip() not in ("", "NA", "null"):
+        evidence_items.append(("Year established", str(year)))
+
+    # Contact evidence
+    contact_parts = []
+    if fd["phone"]:
+        contact_parts.append(f"phone {fd['phone']}")
+    if fd["email"]:
+        contact_parts.append(f"email {fd['email']}")
+    evidence_items.append((
+        "Contact evidence",
+        ", ".join(contact_parts) if contact_parts else "No contact details on record — verify before visiting",
+    ))
+
+    # Data source and freshness
+    raw_src = facility.get("source") or ""
+    clean_src = _clean_data_source(raw_src)
+    if clean_src:
+        evidence_items.append(("Data source", clean_src))
+    recency = facility.get("recency_of_page_update") or ""
+    if recency and str(recency).strip() not in ("", "NA", "null"):
+        evidence_items.append(("Record last updated", str(recency)[:10]))
+
+    # Short description snippet
+    desc = str(facility.get("description") or "").strip()
+    if desc and desc.lower() not in ("na", "null", "none"):
+        evidence_items.append(("Record snippet", desc[:200]))
+
+    # Trust signal
+    if trust_score_row:
+        ts_signal_raw = str(
+            trust_score_row.get("trust_signal")
+            or trust_score_row.get("signal")
+            or ""
+        )
+        ts_why = str(
+            trust_score_row.get("reason")
+            or trust_score_row.get("why")
+            or trust_score_row.get("evidence")
+            or "Based on UC trusted facility evidence"
+        )
+        # Extract and normalize numeric score from trust_scores row
+        ts_numeric: float | None = None
+        for _ts_field in ("trust_score", "score", "confidence", "rating", "evidence_score"):
+            _tv = trust_score_row.get(_ts_field)
+            if _tv is not None:
+                try:
+                    ts_numeric = float(str(_tv).replace("%", "").strip())
+                    break
+                except (ValueError, TypeError):
+                    pass
+        ts_normalized = normalize_trust_score(ts_numeric)
+        # Derive signal: prefer explicit label, fall back to normalized score mapping
+        if ts_signal_raw and ts_signal_raw.lower() not in ("", "unknown", "none"):
+            ts_signal = ts_signal_raw
+        elif ts_normalized is not None:
+            ts_signal = trust_signal_from_score(ts_normalized)
+        else:
+            ts_signal = "Unknown"
+        # If no numeric score but named signal, synthesize a representative score
+        if ts_normalized is None and ts_signal_raw:
+            ts_normalized = score_from_signal(ts_signal_raw)
+        ts_score_display = f"{ts_normalized:.1f}/10" if ts_normalized is not None else ""
+        trust_info = {
+            "signal": ts_signal,
+            "why": ts_why,
+            "source": "facility_trust_scores",
+            "score_display": ts_score_display,
+            "score_source": "facility_trust_scores (Unity Catalog)",
+            "matched_by": "trust_table",
+        }
+    else:
+        proxy = compute_proxy_trust_signal(facility)
+        trust_info = {
+            "signal": proxy["signal"],
+            "why": proxy["why"],
+            "source": "facility record completeness",
+            "score_display": proxy["score_display"],
+            "score_source": "facility record completeness (proxy)",
+            "matched_by": "proxy",
+        }
+
+    return {
+        "evidence_items": evidence_items,
+        "trust_info": trust_info,
+    }
 
 
 def facility_card_public_text(facility: dict) -> str:

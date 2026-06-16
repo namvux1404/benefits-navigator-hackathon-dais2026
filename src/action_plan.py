@@ -1,25 +1,34 @@
 from __future__ import annotations
 
+import re
+
 from .config import ANTHROPIC_API_KEY, CLAUDE_MODEL, CLAUDE_AVAILABLE
 from .bb_logging import log_action_plan_input
 
 _PLAN_SYSTEM = """\
-You are a health benefits navigator AI for families in India.
-Generate a concise, actionable benefit enrollment plan in plain English (max 400 words).
+You are a health benefits navigator AI for families in India, assisting a community health worker.
+Generate a concise, actionable support plan in plain English (max 300 words, 4-6 numbered steps).
 
 FAMILY INTRODUCTION:
-Begin with a 2-3 sentence introductory paragraph that names this family's specific situation
-(pregnancy status, child age, insurance/cost situation), notes that the guidance is based on
-trusted NFHS-5 district health data, and reminds the reader that this guidance supplements
-but does not replace advice from a qualified health worker or local Anganwadi/PHC.
+Begin with 1-2 sentences naming this family's specific situation (pregnancy status, child age,
+insurance/cost situation), noting that the guidance is based on trusted NFHS-5 district health data.
+Remind the reader this supplements but does not replace a qualified health worker or PHC.
 
-Then continue with numbered action steps the family can take TODAY.
-Refer to the Nearby Health Facilities section below instead of listing facility names.
+Then list EXACTLY 4-6 numbered action steps. Keep each step to one sentence.
 Use language simple enough for a community health worker to read aloud.
+Spell "Anganwadi" correctly (not "angawadi" or "Anganwadi worker").
+
+CRITICAL — DO NOT LIST FACILITIES:
+The application displays facility cards with full evidence below the plan — do NOT repeat them.
+You MUST NOT include any of the following in your response:
+  - A heading such as "Nearby Health Facilities", "Facilities", "Recommended Facilities", or similar
+  - Any numbered or bulleted list of facility names, addresses, or phone numbers
+  - Any table or formatted block of facility data
+For facility referral, write exactly one sentence such as:
+  "Review the facility cards below and call the first suitable option to confirm services."
 
 GROUNDING RULES - follow strictly:
 - Use ONLY the support pathways and facility information explicitly provided in this prompt.
-- Do NOT include a "Nearest Health Facilities" section or list facility names in the plan.
 - Do NOT name specific government schemes (Ayushman Bharat, ICDS, PM Matru Vandana Yojana,
   Janani Suraksha Yojana, PMMVY, or any other) unless the pathway text below explicitly names them.
 - Do NOT promise free food, free medicines, or free services unless the pathway text says so.
@@ -30,6 +39,26 @@ GROUNDING RULES - follow strictly:
 - Never assume the family has insurance unless the profile explicitly states uninsured=False.
 - When uncertain about a specific service say: "Ask your local health worker or facility."
 """
+
+# Compiled pattern to strip any facility-list section Claude may have included despite instructions.
+# Matches: a line containing "Facilit..." followed by pipe-delimited numbered items.
+_FACILITY_LIST_RE = re.compile(
+    r'\n[^\n]*Facilit(?:ies|y)[^\n]*\n(?:(?:[ \t]*\d+\.[^\n]*\|[^\n]*\n?))+',
+    re.IGNORECASE,
+)
+# Broader fallback: bold/heading "Facilities" line followed by any numbered items
+_FACILITY_HEADING_RE = re.compile(
+    r'\n(?:(?:\*{1,2})|(?:#{1,3}\s+))(?:Nearby\s+)?(?:Health\s+)?Facilit(?:ies|y)[^\n]*\n'
+    r'(?:(?:[ \t]*\d+\.[^\n]+\n?))+',
+    re.IGNORECASE,
+)
+
+
+def _strip_facility_section(text: str) -> str:
+    """Remove any standalone facility list that Claude included despite the prompt instruction."""
+    result = _FACILITY_LIST_RE.sub('\n', text)
+    result = _FACILITY_HEADING_RE.sub('\n', result)
+    return result.strip()
 
 _MAX_CLAUDE_FACILITIES = 5
 
@@ -193,7 +222,7 @@ def generate_action_plan_with_trace(
             client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
             response = client.messages.create(
                 model=CLAUDE_MODEL,
-                max_tokens=900,
+                max_tokens=700,
                 system=_PLAN_SYSTEM,
                 messages=[{"role": "user", "content": user_msg}],
             )
@@ -202,6 +231,8 @@ def generate_action_plan_with_trace(
             for block in response.content:
                 if block.type == "text":
                     plan_text += block.text
+
+            plan_text = _strip_facility_section(plan_text)
 
             if plan_text.strip():
                 trace.update({

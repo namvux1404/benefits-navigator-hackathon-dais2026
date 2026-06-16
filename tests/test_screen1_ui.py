@@ -9,7 +9,7 @@ SVG_PATH = Path("assets") / "benefitbridge_logo.svg"
 # -- App title -----------------------------------------------------------------
 
 def test_app_title_is_exact():
-    assert 'st.title("BenefitBridge AI")' in APP_SRC
+    assert 'st.title("TrustRoute AI")' in APP_SRC
 
 
 # -- Mojibake and emoji guards -------------------------------------------------
@@ -27,7 +27,7 @@ def test_no_replacement_character():
 
 
 def test_tab_labels_are_plain_text():
-    assert '["Family Navigator", "Program Leader Dashboard", "Data Trust / Debug"]' in APP_SRC
+    assert '["Referral Navigator", "Program Leader Dashboard", "Data Trust / Debug"]' in APP_SRC
 
 
 def test_tab_labels_contain_no_high_unicode():
@@ -47,11 +47,11 @@ def test_title_contains_no_emoji():
 # -- Hero section content ------------------------------------------------------
 
 def test_hero_subtitle_present():
-    assert "From family needs to trusted health support in minutes." in APP_SRC
+    assert "Evidence-backed referral guidance for families and field workers." in APP_SRC
 
 
 def test_hero_description_present():
-    assert "Describe a family situation in plain language" in APP_SRC
+    assert "Describe a family's situation in plain language" in APP_SRC
 
 
 def test_hero_uses_inline_svg():
@@ -63,7 +63,7 @@ def test_hero_has_dark_gradient_background():
 
 
 def test_hero_brand_name_inside_card():
-    assert "BenefitBridge AI" in APP_SRC
+    assert "TrustRoute AI" in APP_SRC
 
 
 # -- SVG asset file ------------------------------------------------------------
@@ -171,13 +171,13 @@ def test_hero_comes_before_text_area():
 
 def test_text_area_before_sample_expander():
     text_area_idx = APP_SRC.index("st.text_area(")
-    expander_idx = APP_SRC.index('st.expander("Try a sample scenario"')
+    expander_idx = APP_SRC.index('st.expander("Try a sample referral scenario"')
     assert text_area_idx < expander_idx
 
 
 def test_sample_scenarios_in_expander():
-    assert 'st.expander("Try a sample scenario", expanded=False)' in APP_SRC
+    assert 'st.expander("Try a sample referral scenario", expanded=False)' in APP_SRC
 
 
 def test_analyze_button_label():
-    assert '"Analyze My Family Profile"' in APP_SRC
+    assert '"Analyze care need"' in APP_SRC

@@ -57,13 +57,13 @@ def test_feedback_section_text_exists_on_screen3():
 
 def test_app_title_text_is_plain():
     app_text = Path("app.py").read_text(encoding="utf-8")
-    assert 'st.title("BenefitBridge AI")' in app_text
+    assert 'st.title("TrustRoute AI")' in app_text
     assert "st.title(\"ð" not in app_text
 
 
 def test_tab_labels_are_plain_text():
     app_text = Path("app.py").read_text(encoding="utf-8")
-    assert '["Family Navigator", "Program Leader Dashboard", "Data Trust / Debug"]' in app_text
+    assert '["Referral Navigator", "Program Leader Dashboard", "Data Trust / Debug"]' in app_text
 
 
 def test_user_facing_ui_text_has_no_mojibake_patterns():
@@ -87,14 +87,14 @@ def test_feedback_labels_do_not_include_emojis():
 def test_screen1_custom_scenario_entry_comes_before_samples():
     app_text = Path("app.py").read_text(encoding="utf-8")
     text_area_idx = app_text.index("st.text_area(")
-    sample_expander_idx = app_text.index('st.expander("Try a sample scenario"')
+    sample_expander_idx = app_text.index('st.expander("Try a sample referral scenario"')
     assert text_area_idx < sample_expander_idx
     assert "Quick-start demo scenarios" not in app_text
 
 
 def test_screen1_sample_scenarios_are_in_expander():
     app_text = Path("app.py").read_text(encoding="utf-8")
-    assert 'st.expander("Try a sample scenario", expanded=False)' in app_text
+    assert 'st.expander("Try a sample referral scenario", expanded=False)' in app_text
     assert "Pregnant mother with young child" in app_text
     assert "Parent with child needing vaccination" in app_text
     assert "Field worker reviewing district health risk" in app_text
@@ -102,7 +102,7 @@ def test_screen1_sample_scenarios_are_in_expander():
 
 def test_screen1_main_button_label_and_empty_guard():
     app_text = Path("app.py").read_text(encoding="utf-8")
-    assert '"Analyze My Family Profile"' in app_text
+    assert '"Analyze care need"' in app_text
     assert '"Analyse My Family Profile"' not in app_text
     assert "disabled=not raw.strip()" in app_text
 
@@ -138,6 +138,25 @@ def test_facility_card_service_tags_max_three():
         )
     }
     assert len(service_tags_for_facility(facility)) <= 3
+
+
+def test_screen3_no_static_next_steps_call():
+    """App must not call next_steps_for_profile (removed static Next Steps section)."""
+    app_text = Path("app.py").read_text(encoding="utf-8")
+    assert "next_steps_for_profile" not in app_text
+
+
+def test_screen3_pathway_card_why_matched():
+    """Pathway cards must use 'Why matched:' label, not 'Reason:'."""
+    app_text = Path("app.py").read_text(encoding="utf-8")
+    assert "**Why matched:**" in app_text
+
+
+def test_screen3_facility_badge_is_trust_signal():
+    """Facility badge text must say 'Trust signal:' not 'Evidence strength:'."""
+    app_text = Path("app.py").read_text(encoding="utf-8")
+    assert "Trust signal:" in app_text
+    assert "Evidence strength:" not in app_text
 
 
 def test_district_context_title_exists_on_screen3():

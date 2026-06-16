@@ -58,6 +58,9 @@ _UC_TABLES: set[str] = {
 _LOAD_CACHE: dict[str, list[dict]] = {}
 _TABLE_STATUS: dict[str, dict] = {}
 
+# Cache for optional tables (trust scores) loaded outside main status tracking
+_OPTIONAL_CACHE: dict[str, list[dict]] = {}
+
 
 def _json_safe(value: Any) -> Any:
     if isinstance(value, Decimal):
@@ -415,6 +418,123 @@ def rank_facilities_for_pathways(
         return (tier, -_facility_service_score(r, pids))
 
     return sorted(facilities, key=_key)
+
+
+def _load_optional_uc_table(name: str) -> list[dict]:
+    """Load an optional UC table without affecting main data source status.
+
+    Results are cached in _OPTIONAL_CACHE. Returns empty list on any failure so
+    callers can treat the table as unavailable without crashing.
+    """
+    if name in _OPTIONAL_CACHE:
+        return _OPTIONAL_CACHE[name]
+    rows: list[dict] = []
+    if DATA_MODE == "uc":
+        try:
+            rows = _load_uc_table(name)
+        except Exception:
+            rows = _load_json(name)
+    else:
+        rows = _load_json(name)
+    _OPTIONAL_CACHE[name] = rows
+    return rows
+
+
+def load_facility_trust_scores() -> list[dict]:
+    """Return rows from facility_trust_scores (UC if available, else empty list)."""
+    return _load_optional_uc_table("facility_trust_scores")
+
+
+_CITY_NORM: dict[str, str] = {
+    "BENGALURU": "BANGALORE",
+    "BENGALURU URBAN": "BANGALORE",
+    "BENGALURU RURAL": "BANGALORE RURAL",
+    "MYSURU": "MYSORE",
+    "KALABURAGI": "GULBARGA",
+    "VIJAYAPURA": "BIJAPUR",
+    "BELAGAVI": "BELGAUM",
+}
+
+
+def _norm_city(s: Any) -> str:
+    """Normalize city name to a canonical form, collapsing common Kannada↔English variants."""
+    n = _norm(s)
+    return _CITY_NORM.get(n, n)
+
+
+def _norm_name(s: Any) -> str:
+    """Lower-case, strip punctuation, collapse whitespace for fuzzy name matching."""
+    import re
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", str(s or "").lower())).strip()
+
+
+def get_facility_trust_score(facility: dict, trust_scores: list[dict]) -> dict | None:
+    """Return the matching trust_score row for a facility using best-effort key matching.
+
+    Join priority:
+      1. unique_id / facility_id exact match
+      2. source_content_id exact match
+      3. content_table_id exact match
+      4. normalized name + city + state
+      5. normalized name + pincode
+      6. normalized name + city
+      7. normalized name only (last fallback)
+    Returns None if no match found.
+    """
+    if not trust_scores:
+        return None
+
+    fac_uid = str(facility.get("unique_id") or "").strip()
+    fac_src_id = str(facility.get("source_content_id") or "").strip()
+    fac_ct_id = str(facility.get("content_table_id") or "").strip()
+    fac_name_n = _norm_name(facility.get("name") or "")
+    fac_city = _norm_city(facility.get("address_city") or "")
+    fac_state = _norm(facility.get("address_stateOrRegion") or "")
+    fac_pin = _norm(facility.get("address_zipOrPostcode") or "")
+
+    for row in trust_scores:
+        row_uid = str(row.get("unique_id") or row.get("facility_id") or row.get("id") or "").strip()
+        row_src_id = str(row.get("source_content_id") or row.get("content_id") or "").strip()
+        row_ct_id = str(row.get("content_table_id") or "").strip()
+
+        # 1. unique_id / facility_id
+        if fac_uid and row_uid and fac_uid == row_uid:
+            return row
+        # 2. source_content_id
+        if fac_src_id and row_src_id and fac_src_id == row_src_id:
+            return row
+        # 3. content_table_id
+        if fac_ct_id and row_ct_id and fac_ct_id == row_ct_id:
+            return row
+
+    if not fac_name_n:
+        return None
+
+    for row in trust_scores:
+        row_name_n = _norm_name(row.get("facility_name") or row.get("name") or "")
+        if row_name_n != fac_name_n:
+            continue
+        row_city = _norm_city(row.get("address_city") or row.get("city") or "")
+        row_state = _norm(row.get("address_stateOrRegion") or row.get("state") or "")
+        row_pin = _norm(row.get("address_zipOrPostcode") or row.get("pincode") or "")
+
+        # 4. name + city + state
+        if fac_city and row_city and fac_city == row_city and fac_state and row_state and fac_state == row_state:
+            return row
+        # 5. name + pincode
+        if fac_pin and row_pin and fac_pin == row_pin:
+            return row
+        # 6. name + city
+        if fac_city and row_city and fac_city == row_city:
+            return row
+
+    # 7. name only (second pass to avoid city mismatches above)
+    for row in trust_scores:
+        row_name_n = _norm_name(row.get("facility_name") or row.get("name") or "")
+        if row_name_n == fac_name_n:
+            return row
+
+    return None
 
 
 def get_district_alias(district_norm: str) -> str:
