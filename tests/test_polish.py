@@ -1014,3 +1014,181 @@ def test_results_section_order_correct_sequence():
     o = results_section_order()
     assert o.index("matched_pathways") < o.index("action_plan")
     assert o.index("action_plan") < o.index("facilities")
+
+
+# -- Needs display: deduplication and human-readable labels --------------------
+
+def test_format_needs_no_underscores_in_output():
+    from src.ui_helpers import format_needs_for_display
+    result = format_needs_for_display(["maternal_care", "child_nutrition"])
+    assert "_" not in result
+
+
+def test_format_needs_deduplicates_case_insensitively():
+    from src.ui_helpers import format_needs_for_display
+    result = format_needs_for_display(
+        ["child_immunization", "child immunization", "Child Immunization"]
+    )
+    assert result.count("Child immunization") == 1
+
+
+def test_format_needs_child_immunization_variants_render_once():
+    from src.ui_helpers import format_needs_for_display
+    result = format_needs_for_display(["child_immunization", "child immunization"])
+    items = [x.strip() for x in result.split(",")]
+    assert items.count("Child immunization") == 1
+    assert len(items) == 1
+
+
+def test_format_needs_nearby_facility_variants_render_once():
+    from src.ui_helpers import format_needs_for_display
+    result = format_needs_for_display(["nearby_facility", "nearby facility"])
+    items = [x.strip() for x in result.split(",")]
+    assert items.count("Nearby facility search") == 1
+    assert len(items) == 1
+
+
+def test_format_needs_full_dedup_scenario():
+    """Simulate the real duplicate scenario: raw keys + spaced versions both present."""
+    from src.ui_helpers import format_needs_for_display
+    needs = [
+        "maternal_care", "child_nutrition", "child_immunization",
+        "nearby_facility", "child immunization", "nearby facility",
+    ]
+    result = format_needs_for_display(needs)
+    items = [x.strip() for x in result.split(",")]
+    assert len(items) == 4
+    assert "Maternal care" in items
+    assert "Child nutrition" in items
+    assert "Child immunization" in items
+    assert "Nearby facility search" in items
+
+
+def test_format_needs_empty_returns_dash():
+    from src.ui_helpers import format_needs_for_display
+    assert format_needs_for_display([]) == "-"
+
+
+def test_format_needs_app_uses_helper():
+    from pathlib import Path
+    src = Path("app.py").read_text(encoding="utf-8")
+    assert "format_needs_for_display" in src
+
+
+# -- Why matched: human-readable, no raw boolean expressions ------------------
+
+def test_pathway_reason_maternal_care_pregnant():
+    from src.ui_helpers import pathway_reason
+    profile = {"pregnant": True}
+    pw = {"pathway_id": "maternal_care", "trigger_condition": "pregnant=true OR recently_delivered=true"}
+    assert pathway_reason(profile, pw) == "Pregnancy mentioned"
+
+
+def test_pathway_reason_child_nutrition():
+    from src.ui_helpers import pathway_reason
+    profile = {"nutrition_need": True}
+    pw = {"pathway_id": "child_nutrition", "trigger_condition": "child_under_5=true OR nutrition_need=true"}
+    assert pathway_reason(profile, pw) == "Nutrition support requested"
+
+
+def test_pathway_reason_health_insurance_uninsured():
+    from src.ui_helpers import pathway_reason
+    profile = {"uninsured": True}
+    pw = {"pathway_id": "health_insurance_awareness", "trigger_condition": "uninsured=true OR low_income=true"}
+    result = pathway_reason(profile, pw)
+    assert "uninsured" in result.lower() or "low-cost" in result.lower()
+    assert "=" not in result
+
+
+def test_pathway_reason_women_preventive_screening_no_raw_boolean():
+    from src.ui_helpers import pathway_reason
+    profile = {"adult_woman": True}
+    pw = {"pathway_id": "women_preventive_screening", "trigger_condition": "adult_woman=true OR screening_need=true"}
+    result = pathway_reason(profile, pw)
+    assert "=" not in result
+    assert "OR" not in result
+    assert "true" not in result.lower() or "True" not in result
+
+
+def test_pathway_reason_household_health_risk_no_raw_boolean():
+    from src.ui_helpers import pathway_reason
+    profile = {"water_sanitation_need": True}
+    pw = {"pathway_id": "household_health_risk", "trigger_condition": "water_sanitation_need=true OR child_diarrhea_risk=true"}
+    result = pathway_reason(profile, pw)
+    assert "=" not in result
+    assert "OR" not in result
+
+
+def test_pathway_reason_fallback_never_shows_raw_boolean():
+    from src.ui_helpers import pathway_reason
+    profile = {}
+    pw = {"pathway_id": "unknown_pathway", "pathway_name": "Some pathway", "trigger_condition": "foo=true AND bar=false"}
+    result = pathway_reason(profile, pw)
+    assert "=" not in result
+    assert "AND" not in result
+
+
+def test_pathway_expander_collapsed_by_default():
+    from pathlib import Path
+    src = Path("app.py").read_text(encoding="utf-8")
+    assert 'st.expander("Technical match rule", expanded=False)' in src
+
+
+# -- Evidence card: friendly score-source and matched-by labels ---------------
+
+def test_evidence_summary_uc_score_source_is_friendly():
+    from src.ui_helpers import facility_evidence_summary
+    facility = {"name": "Test Clinic", "address_city": "Bengaluru"}
+    fake_ts_row = {"trust_signal": "High", "trust_score": 8.5, "reason": "Verified record"}
+    ev = facility_evidence_summary(facility, trust_score_row=fake_ts_row)
+    assert ev["trust_info"]["score_source"] == "Unity Catalog facility trust score table"
+
+
+def test_evidence_summary_uc_matched_by_is_friendly():
+    from src.ui_helpers import facility_evidence_summary
+    facility = {"name": "Test Clinic", "address_city": "Bengaluru"}
+    fake_ts_row = {"trust_signal": "Medium", "trust_score": 6.0, "reason": "Partial record"}
+    ev = facility_evidence_summary(facility, trust_score_row=fake_ts_row)
+    assert ev["trust_info"]["matched_by"] == "Trust score lookup"
+
+
+def test_evidence_summary_uc_score_source_no_raw_table_name():
+    from src.ui_helpers import facility_evidence_summary
+    facility = {"name": "Test Clinic"}
+    fake_ts_row = {"trust_signal": "High", "trust_score": 9.0}
+    ev = facility_evidence_summary(facility, trust_score_row=fake_ts_row)
+    assert "facility_trust_scores" not in ev["trust_info"]["score_source"]
+    assert "trust_table" not in ev["trust_info"]["matched_by"]
+
+
+def test_evidence_summary_proxy_score_source_is_friendly():
+    from src.ui_helpers import facility_evidence_summary
+    facility = {"name": "Test Clinic", "officialPhone": "080-12345678"}
+    ev = facility_evidence_summary(facility, trust_score_row=None)
+    assert "proxy" in ev["trust_info"]["score_source"].lower()
+    assert "facility_trust_scores" not in ev["trust_info"]["score_source"]
+
+
+def test_evidence_summary_proxy_matched_by_is_friendly():
+    from src.ui_helpers import facility_evidence_summary
+    facility = {"name": "Test Clinic", "officialPhone": "080-12345678"}
+    ev = facility_evidence_summary(facility, trust_score_row=None)
+    assert ev["trust_info"]["matched_by"] == "Proxy scoring"
+    assert "trust_table" not in ev["trust_info"]["matched_by"]
+
+
+def test_app_facility_card_shows_friendly_score_source():
+    from pathlib import Path
+    src = Path("app.py").read_text(encoding="utf-8")
+    assert "Score source:" in src
+    # Raw table name must not be hardcoded in the card rendering line
+    assert '"facility_trust_scores (Unity Catalog)"' not in src
+    assert '"trust_table"' not in src
+
+
+def test_ui_helpers_uc_trust_info_no_raw_snake_table():
+    from pathlib import Path
+    src = Path("src/ui_helpers.py").read_text(encoding="utf-8")
+    # The score_source and matched_by strings must not use raw internal table names
+    assert '"facility_trust_scores (Unity Catalog)"' not in src
+    assert '"trust_table"' not in src

@@ -73,6 +73,7 @@ from src.ui_helpers import (
     facility_evidence_summary,
     facility_why_shown,
     format_facility,
+    format_needs_for_display,
     get_nfhs_display_rows,
     limited_facilities,
     pathway_reason,
@@ -330,7 +331,7 @@ with tab1:
             _child_str = "No child under 5"
 
         _needs = base_profile.get("needs") or []
-        _needs_str = ", ".join(_needs) if _needs else "-"
+        _needs_str = format_needs_for_display(_needs)
 
         # Parse current form_answers for live insurance/travel/urgency preview
         _preview_updates = parse_followup_answers(questions, form_answers)

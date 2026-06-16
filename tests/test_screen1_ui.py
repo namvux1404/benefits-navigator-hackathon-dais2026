@@ -195,10 +195,86 @@ def test_no_benefitbridge_in_user_facing_strings():
     assert "BenefitBridge AI" not in APP_SRC
 
 
+_SPLIT_WORD_PATTERNS = [
+    # original set
+    "sup port", "rep lace", "loc ation", "fac ility",
+    "quest ions", "path ways", "confirm ation", "recomm ends",
+    # extended set
+    "s ituation", "situ ation", "rout ing", "insur ance",
+    "pro file", "pu blic", "ser vices", "avail able",
+    "re cords", "pro vided", "con firm", "cur rent",
+    # final global pass
+    "avai lable", "opti ons", "evi dence", "com pleteness",
+    "preg nant", "dist rict", "cover age", "post natal",
+    "facil ity_trust",
+]
+
+
 def test_no_accidental_split_words_in_hero_and_footer():
-    split_patterns = [
-        "sup port", "rep lace", "loc ation", "fac ility",
-        "quest ions", "path ways", "confirm ation", "recomm ends",
-    ]
-    for pat in split_patterns:
-        assert pat not in APP_SRC, f"Split word found: '{pat}'"
+    for pat in _SPLIT_WORD_PATTERNS:
+        assert pat not in APP_SRC, f"Split word found in app.py: '{pat}'"
+
+
+def test_no_accidental_split_words_in_ui_helpers():
+    from pathlib import Path
+    src = Path("src/ui_helpers.py").read_text(encoding="utf-8")
+    for pat in _SPLIT_WORD_PATTERNS:
+        assert pat not in src, f"Split word found in ui_helpers.py: '{pat}'"
+
+
+def test_no_accidental_split_words_in_followup():
+    from pathlib import Path
+    src = Path("src/followup.py").read_text(encoding="utf-8")
+    for pat in _SPLIT_WORD_PATTERNS:
+        assert pat not in src, f"Split word found in followup.py: '{pat}'"
+
+
+def test_no_accidental_split_words_in_action_plan():
+    from pathlib import Path
+    src = Path("src/action_plan.py").read_text(encoding="utf-8")
+    for pat in _SPLIT_WORD_PATTERNS:
+        assert pat not in src, f"Split word found in action_plan.py: '{pat}'"
+
+
+# -- Correct Screen 1 strings locked -----------------------------------------
+
+def test_hero_body_text_exact():
+    # Check both halves (source splits across two adjacent string literals)
+    assert "Describe a family's situation in plain language. TrustRoute AI asks smart follow-up questions," in APP_SRC
+    assert "matches support pathways, and recommends nearby facilities using trusted data, trust signals, and uncertainty notes." in APP_SRC
+
+
+def test_screen1_caption_exact():
+    assert "As a community health worker or NGO coordinator, enter the family's health situation" in APP_SRC
+    assert "TrustRoute AI will help identify support pathways and nearby facility options." in APP_SRC
+
+
+def test_screen1_footer_exact():
+    assert "TrustRoute AI supports referral decisions." in APP_SRC
+    assert "It does not replace professional medical advice or direct confirmation with a facility." in APP_SRC
+
+
+def test_screen1_title_still_trustroute():
+    assert 'st.title("TrustRoute AI")' in APP_SRC
+
+
+def test_screen1_button_still_find_trusted():
+    assert '"Find Trusted Care Options"' in APP_SRC
+
+
+# -- Correct Screen 2 strings locked -----------------------------------------
+
+def test_screen2_heading_exact():
+    assert "A few quick questions to route the family to the right support" in APP_SRC
+
+
+def test_screen2_caption_contains_trustroute():
+    assert "TrustRoute AI can route the family to the right support pathways and facilities" in APP_SRC
+
+
+def test_screen2_profile_title_routing():
+    assert "Profile used for routing" in APP_SRC
+
+
+def test_screen2_footer_exact():
+    assert "Profile updates as you answer questions above. Click Generate when ready." in APP_SRC

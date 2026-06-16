@@ -212,25 +212,37 @@ def pathway_reason(profile: dict, pathway: dict) -> str:
     pathway_id = pathway.get("pathway_id", "")
     if pathway_id == "immunization":
         age = profile.get("child_age_months")
-        parts = []
+        parts: list[str] = []
         if age is not None:
-            parts.append(f"child age {age} months")
+            parts.append(f"child aged {age} months")
         if profile.get("immunization_need"):
-            parts.append("immunization need")
-        return " + ".join(parts) or pathway.get("trigger_condition", "")
+            parts.append("immunization need identified")
+        return ", ".join(parts).capitalize() if parts else "Child in immunization age range"
     if pathway_id == "maternal_care":
         if profile.get("pregnant"):
-            return "pregnancy mentioned"
+            return "Pregnancy mentioned"
         if profile.get("recently_delivered"):
-            return "recent delivery mentioned"
-    if pathway_id == "child_nutrition" and profile.get("nutrition_need"):
-        return "nutrition support requested"
+            return "Recent delivery mentioned"
+        return "Maternal care need identified"
+    if pathway_id == "child_nutrition":
+        if profile.get("nutrition_need"):
+            return "Nutrition support requested"
+        if profile.get("child_under_5"):
+            return "Child under 5 — nutrition support available"
+        return "Child nutrition need identified"
     if pathway_id == "health_insurance_awareness":
         if profile.get("uninsured"):
-            return "uninsured or no coverage mentioned"
+            return "Low-cost or uninsured care need mentioned"
         if profile.get("low_income"):
-            return "affordability or low-cost need mentioned"
-    return pathway.get("trigger_condition", "")
+            return "Affordability or low-cost care need mentioned"
+        return "Health coverage question identified"
+    if pathway_id == "household_health_risk":
+        return "Household health risk factors mentioned"
+    if pathway_id == "women_preventive_screening":
+        return "Adult woman profile may benefit from preventive screening guidance"
+    # Safe fallback: never show raw boolean expressions
+    name = pathway.get("pathway_name") or pathway_id.replace("_", " ").capitalize()
+    return f"{name} criteria matched"
 
 
 def facility_why_shown(
@@ -270,6 +282,33 @@ def next_steps_for_profile(profile: dict) -> list[str]:
         "Bring any available health record.",
         "Confirm next visit or referral.",
     ]
+
+
+_NEED_LABELS: dict[str, str] = {
+    "maternal care": "Maternal care",
+    "child nutrition": "Child nutrition",
+    "child immunization": "Child immunization",
+    "nearby facility": "Nearby facility search",
+    "health insurance": "Health insurance / low-cost care",
+    "preventive screening": "Preventive screening",
+}
+
+
+def format_needs_for_display(needs: list[str]) -> str:
+    """Return a deduplicated, human-readable comma-separated string of needs.
+
+    Normalises each need by replacing underscores with spaces and lower-casing,
+    deduplicates case-insensitively, then maps to a friendly label.
+    """
+    seen: set[str] = set()
+    labels: list[str] = []
+    for raw in needs:
+        normalised = raw.replace("_", " ").strip().lower()
+        if normalised in seen:
+            continue
+        seen.add(normalised)
+        labels.append(_NEED_LABELS.get(normalised, normalised.capitalize()))
+    return ", ".join(labels) if labels else "-"
 
 
 def limited_facilities(facilities: list[dict], limit: int = 5) -> list[dict]:
@@ -588,8 +627,8 @@ def facility_evidence_summary(facility: dict, trust_score_row: dict | None = Non
             "why": ts_why,
             "source": "facility_trust_scores",
             "score_display": ts_score_display,
-            "score_source": "facility_trust_scores (Unity Catalog)",
-            "matched_by": "trust_table",
+            "score_source": "Unity Catalog facility trust score table",
+            "matched_by": "Trust score lookup",
         }
     else:
         proxy = compute_proxy_trust_signal(facility)
@@ -598,8 +637,8 @@ def facility_evidence_summary(facility: dict, trust_score_row: dict | None = Non
             "why": proxy["why"],
             "source": "facility record completeness",
             "score_display": proxy["score_display"],
-            "score_source": "facility record completeness (proxy)",
-            "matched_by": "proxy",
+            "score_source": "Facility record completeness (proxy estimate)",
+            "matched_by": "Proxy scoring",
         }
 
     return {
